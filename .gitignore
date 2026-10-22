@@ -1,1 +1,4 @@
 /target
+
+# Local test data (internal business data, do not commit)
+goldtone_products*

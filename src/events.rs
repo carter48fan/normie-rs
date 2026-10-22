@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 pub enum Event {
     Input(KeyEvent),
+    Resize,
     Tick,
 }
 
@@ -22,11 +23,11 @@ impl Events {
                     .checked_sub(last_tick.elapsed())
                     .unwrap_or_else(|| Duration::from_secs(0));
 
-                if event::poll(timeout).expect("should poll works") {
-                    if let CrosstermEvent::Key(key) = event::read().expect("can read events") {
-                        if tx.send(Event::Input(key)).is_err() {
-                            break;
-                        }
+                if event::poll(timeout).expect("poll failed") {
+                    match event::read().expect("read event failed") {
+                        CrosstermEvent::Key(key) if tx.send(Event::Input(key)).is_err() => break,
+                        CrosstermEvent::Resize(_, _) if tx.send(Event::Resize).is_err() => break,
+                        _ => {}
                     }
                 }
 

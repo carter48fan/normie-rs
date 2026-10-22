@@ -61,6 +61,7 @@ normie-rs
 - `TAB`: Switch between **Columns** and **Unique Values** panes.
 - `M`: Toggle **Master Transformation Pipeline** view.
 - `UP/DOWN`: Navigate the active list.
+- `SHIFT+UP/DOWN` or `J/K`: Reorder transformation step (in Master view).
 - `SPACE`: Multi-select values for batch mapping or filtering.
 - `ENTER`: Open **Normalization Modal** to map selected/highlighted value(s).
 - `/`: Open **Search Modal** to filter unique values in the current column.
@@ -69,6 +70,14 @@ normie-rs
 - `S`: Save normalized CSV.
 - `DELETE / BACKSPACE`: Remove a mapping (or a pipeline step in Master view).
 - `Q / ESC`: Return to Dashboard.
+
+#### Input Modals (Normalize / Filter)
+- `LEFT / RIGHT`: Move cursor.
+- `HOME / END`: Move cursor to beginning / end.
+- `CTRL+U`: Clear text buffer.
+- `CTRL+W`: Delete previous word.
+- `ENTER`: Confirm.
+- `ESC`: Cancel.
 
 ## Data & Configuration
 

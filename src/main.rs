@@ -37,8 +37,13 @@ fn main() -> Result<()> {
     let events = Events::new(Duration::from_millis(250));
 
     // Main Loop
+    let mut needs_redraw = true;
+
     loop {
-        terminal.draw(|f| ui::draw(f, &mut app))?;
+        if needs_redraw {
+            terminal.draw(|f| ui::draw(f, &mut app))?;
+            needs_redraw = false;
+        }
 
         match events.next()? {
             Event::Input(key) => {
@@ -46,6 +51,10 @@ fn main() -> Result<()> {
                     continue;
                 }
                 app.handle_event(key)?;
+                needs_redraw = true;
+            }
+            Event::Resize => {
+                needs_redraw = true;
             }
             Event::Tick => {}
         }

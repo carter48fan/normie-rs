@@ -1,0 +1,39 @@
+{
+  "pipeline": [
+    {
+      "SimpleMap": {
+        "column": "flange",
+        "original": "One piece Die Cast",
+        "normalized": "One-Piece Die Cast Flange"
+      }
+    },
+    {
+      "SimpleMap": {
+        "column": "flange",
+        "original": "One Piece Cast",
+        "normalized": "One-Piece Die Cast Flange"
+      }
+    },
+    {
+      "SimpleMap": {
+        "column": "flange",
+        "original": "One-Piece",
+        "normalized": "One-Piece Die Cast Flange"
+      }
+    },
+    {
+      "SimpleMap": {
+        "column": "flange",
+        "original": "One Piece Zinc",
+        "normalized": "One-Piece Die Cast Flange"
+      }
+    },
+    {
+      "SimpleMap": {
+        "column": "flange",
+        "original": "One Piece Die Cast Zinc",
+        "normalized": "One-Piece Die Cast Flange"
+      }
+    }
+  ]
+}

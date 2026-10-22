@@ -23,7 +23,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 fn ui_dashboard(f: &mut Frame, state: &mut DashboardState, _config: &Config) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(0)].as_ref())
+        .constraints([Constraint::Length(7), Constraint::Min(0), Constraint::Length(2)].as_ref())
         .split(f.size());
 
     let title = Paragraph::new(vec![
@@ -48,6 +48,13 @@ fn ui_dashboard(f: &mut Frame, state: &mut DashboardState, _config: &Config) {
 
     let area = centered_rect(50, 50, chunks[1]);
     f.render_stateful_widget(menu, area, &mut state.menu.state);
+
+    if let Some(err) = &state.error_msg {
+        let err_p = Paragraph::new(format!(" ⚠️  {} ", err))
+            .style(Style::default().fg(Color::Red).bold())
+            .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(err_p, chunks[2]);
+    }
 }
 
 fn ui_file_browser(f: &mut Frame, state: &mut FileBrowserState) {
@@ -137,11 +144,17 @@ fn ui_normalizer(f: &mut Frame, app: &mut NormalizerApp) {
         Span::raw("")
     };
 
+    let master_hint = if app.ui.active_pane == ActivePane::MasterList {
+        " | SHIFT+UP/DN or J/K: Reorder Step | DEL: Remove Step | TAB: Panes | ESC: Dashboard "
+    } else {
+        " | TAB: Switch | M: Master List | F: Filter | /: Search | SPACE: Select | ENTER: Map | DEL: Undo | S: Save | Q/ESC: Dashboard "
+    };
+
     let footer = Line::from(vec![
         Span::styled(format!(" Status: {} ", app.status_msg), Style::default().bg(Color::Blue).fg(Color::White)),
         sel_tag,
         filter_tag,
-        Span::raw(" | TAB: Switch | M: Master List | F: Filter | /: Search | SPACE: Select | ENTER: Map | DEL: Undo | S: Save | Q/ESC: Dashboard "),
+        Span::raw(master_hint),
     ]);
     f.render_widget(Paragraph::new(footer), chunks[1]);
 
@@ -204,7 +217,7 @@ fn ui_normalizer(f: &mut Frame, app: &mut NormalizerApp) {
         let p = Paragraph::new(format!("\n  {}", app.ui.input_buffer)).block(block);
         f.render_widget(p, area);
         f.set_cursor(
-            area.x + 3 + app.ui.input_buffer.chars().count() as u16,
+            area.x + 3 + app.ui.input_cursor as u16,
             area.y + 2,
         );
     }
@@ -437,12 +450,17 @@ fn ui_master_list(f: &mut Frame, app: &mut NormalizerApp, area: Rect) {
 fn calculate_single_info(app: &NormalizerApp, col_idx: usize, orig_idx: usize) -> String {
     let val = &app.db.unique_values[col_idx][orig_idx].0;
     if let Some(indices) = app.db.row_registry[col_idx].get(val.as_str()) {
-        let mut keys: Vec<&str> = indices
-            .iter()
-            .map(|&idx| app.db.columns[app.ui.registry_key_col].values[idx].as_ref())
-            .collect();
-        keys.sort_unstable();
-        keys.dedup();
+        let mut keys = Vec::with_capacity(5);
+        let mut seen = std::collections::HashSet::new();
+        for &idx in indices {
+            let k = app.db.columns[app.ui.registry_key_col].values[idx].as_ref();
+            if seen.insert(k) {
+                keys.push(k);
+                if keys.len() >= 5 {
+                    break;
+                }
+            }
+        }
         if keys.is_empty() {
             "-".to_string()
         } else {
@@ -456,6 +474,10 @@ fn calculate_single_info(app: &NormalizerApp, col_idx: usize, orig_idx: usize) -
                 } else {
                     joined.push_str(k);
                 }
+            }
+            if indices.len() > keys.len() {
+                let diff = indices.len() - keys.len();
+                joined.push_str(&format!(" (+{} rows)", diff));
             }
             joined
         }

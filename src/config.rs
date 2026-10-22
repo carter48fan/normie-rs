@@ -33,7 +33,7 @@ impl Config {
     }
 
     pub fn add_recent(&mut self, path: PathBuf) {
-        let path = fs::canonicalize(&path).unwrap_or_else(|_| path);
+        let path = fs::canonicalize(&path).unwrap_or(path);
         self.recent_files.retain(|p| p != &path);
         self.recent_files.insert(0, path);
         if self.recent_files.len() > 10 {

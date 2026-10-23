@@ -52,13 +52,15 @@ impl<T> StatefulList<T> {
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
     use ratatui::layout::{Constraint, Direction, Layout};
+    let px = percent_x.min(100);
+    let py = percent_y.min(100);
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints(
             [
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage((100 - py) / 2),
+                Constraint::Percentage(py),
+                Constraint::Percentage((100 - py) / 2),
             ]
             .as_ref(),
         )
@@ -68,9 +70,9 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -
         .direction(Direction::Horizontal)
         .constraints(
             [
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage((100 - px) / 2),
+                Constraint::Percentage(px),
+                Constraint::Percentage((100 - px) / 2),
             ]
             .as_ref(),
         )

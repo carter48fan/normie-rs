@@ -23,12 +23,18 @@ impl Events {
                     .checked_sub(last_tick.elapsed())
                     .unwrap_or_else(|| Duration::from_secs(0));
 
-                if event::poll(timeout).expect("poll failed") {
-                    match event::read().expect("read event failed") {
-                        CrosstermEvent::Key(key) if tx.send(Event::Input(key)).is_err() => break,
-                        CrosstermEvent::Resize(_, _) if tx.send(Event::Resize).is_err() => break,
+                match event::poll(timeout) {
+                    Ok(true) => match event::read() {
+                        Ok(CrosstermEvent::Key(key)) if tx.send(Event::Input(key)).is_err() => {
+                            break;
+                        }
+                        Ok(CrosstermEvent::Resize(_, _)) if tx.send(Event::Resize).is_err() => {
+                            break;
+                        }
                         _ => {}
-                    }
+                    },
+                    Ok(false) => {}
+                    Err(_) => break,
                 }
 
                 if last_tick.elapsed() >= tick_rate {

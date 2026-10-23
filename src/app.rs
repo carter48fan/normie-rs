@@ -120,6 +120,7 @@ pub struct App {
 }
 
 impl App {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             state: AppState::Dashboard(DashboardState::new()),
@@ -228,6 +229,7 @@ pub struct FileBrowserState {
     pub current_dir: PathBuf,
     pub entries: StatefulList<PathBuf>,
     pub error_msg: Option<String>,
+    pub show_all_files: bool,
 }
 
 impl FileBrowserState {
@@ -236,21 +238,35 @@ impl FileBrowserState {
             current_dir: dir,
             entries: StatefulList::new(),
             error_msg: None,
+            show_all_files: false,
         };
         s.refresh();
         s
     }
 
     pub fn refresh(&mut self) {
+        let show_all = self.show_all_files;
         let mut items: Vec<PathBuf> = fs::read_dir(&self.current_dir)
             .map(|rd| {
                 rd.filter_map(|e| e.ok())
                     .map(|e| e.path())
                     .filter(|p| {
-                        p.is_dir()
-                            || p.extension()
-                                .map(|ext| ext == "csv")
-                                .unwrap_or(false)
+                        if p.is_dir() {
+                            return true;
+                        }
+                        if show_all {
+                            return true;
+                        }
+                        p.extension()
+                            .and_then(|ext| ext.to_str())
+                            .map(|ext| {
+                                let lower = ext.to_lowercase();
+                                matches!(
+                                    lower.as_str(),
+                                    "csv" | "tsv" | "tab" | "txt" | "psv" | "dsv" | "dat" | "json"
+                                )
+                            })
+                            .unwrap_or(false)
                     })
                     .collect()
             })
@@ -270,6 +286,11 @@ impl FileBrowserState {
     pub fn handle_event(&mut self, config: &mut Config, key: KeyEvent) -> Action {
         self.error_msg = None;
         match key.code {
+            KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('.') => {
+                self.show_all_files = !self.show_all_files;
+                self.refresh();
+                Action::None
+            }
             KeyCode::Esc | KeyCode::Char('q') => Action::Navigate(AppState::Dashboard(DashboardState::new())),
             KeyCode::Up => {
                 self.entries.previous();
@@ -354,6 +375,8 @@ pub struct NormalizerApp {
     pub pipeline_cache: HashMap<(String, String), crate::db::TransformationStep>,
     pub ui: UiState,
     pub status_msg: String,
+    pub delimiter: crate::table::Delimiter,
+    pub encoding_name: &'static str,
 }
 
 impl NormalizerApp {
@@ -377,8 +400,18 @@ impl NormalizerApp {
         }
     }
 
-    pub fn new(path: PathBuf, headers: csv::StringRecord, raw_rows: Vec<Vec<String>>) -> Self {
-        let headers: Vec<String> = headers.iter().map(|s| s.to_string()).collect();
+    pub fn new(
+        path: PathBuf,
+        headers: Vec<String>,
+        raw_rows: Vec<Vec<String>>,
+        delimiter: crate::table::Delimiter,
+        encoding_name: &'static str,
+    ) -> Self {
+        let headers: Vec<String> = if headers.is_empty() {
+            vec!["Column_1".to_string()]
+        } else {
+            headers
+        };
         let num_rows = raw_rows.len();
         let num_cols = headers.len();
 
@@ -429,12 +462,19 @@ impl NormalizerApp {
             .collect();
 
         let mut col_state = ListState::default();
-        col_state.select(Some(0));
+        if !headers.is_empty() {
+            col_state.select(Some(0));
+        }
 
         let initial_key_idx = headers
             .iter()
             .position(|h| h.to_lowercase() == "id")
             .unwrap_or(0);
+        let safe_key_idx = if headers.is_empty() {
+            0
+        } else {
+            initial_key_idx.min(headers.len() - 1)
+        };
 
         let mut app = Self {
             norm: NormalizationState::load(&path),
@@ -459,11 +499,13 @@ impl NormalizerApp {
                 key_list_state: ListState::default(),
                 master_list_state: ListState::default(),
                 multi_selected: HashSet::new(),
-                registry_key_col: initial_key_idx,
+                registry_key_col: safe_key_idx,
                 active_filters: Vec::new(),
                 current_filter_operator: crate::db::ConditionOperator::Contains,
             },
             status_msg: "Ready (Mappings Loaded)".to_string(),
+            delimiter,
+            encoding_name,
         };
         app.rebuild_pipeline_cache();
         app.update_filtered_vals();
@@ -978,8 +1020,12 @@ impl NormalizerApp {
 
     pub fn save_csv(&mut self) -> Result<()> {
         let stem = self.path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-        let output_path = self.path.with_file_name(format!("{}_normalized.csv", stem));
-        let mut wtr = csv::Writer::from_path(&output_path)?;
+        let orig_ext = self.path.extension().and_then(|s| s.to_str());
+        let ext = self.delimiter.default_extension(orig_ext);
+        let output_path = self.path.with_file_name(format!("{}_normalized.{}", stem, ext));
+        let mut wtr = csv::WriterBuilder::new()
+            .delimiter(self.delimiter.as_byte())
+            .from_path(&output_path)?;
         wtr.write_record(&self.db.headers)?;
 
         // Pre-resolve steps and conditions before the row loop to avoid linear searches and float parsing on every row
@@ -1100,66 +1146,19 @@ impl NormalizerApp {
 }
 
 pub fn load_normalizer(path: PathBuf) -> Result<NormalizerApp> {
-    let mut rdr = csv::ReaderBuilder::new()
-        .flexible(true)
-        .from_path(&path)
-        .context(format!("Could not find {:?}", path))?;
-    // Read raw bytes rather than StringRecords so non-UTF-8 input (e.g. Excel's
-    // Windows-1252 "CSV" export) doesn't abort the load.
-    let mut fallback_fields = 0;
-    let headers: csv::StringRecord = rdr
-        .byte_headers()?
-        .iter()
-        .map(|f| decode_field(f, &mut fallback_fields))
-        .collect();
-    if headers.is_empty() {
-        anyhow::bail!("CSV file has no header columns");
-    }
-    let mut rows = Vec::new();
-    for result in rdr.byte_records() {
-        let record = result?;
-        rows.push(record.iter().map(|f| decode_field(f, &mut fallback_fields)).collect());
-    }
-    let mut app = NormalizerApp::new(path, headers, rows);
-    if fallback_fields > 0 {
-        app.status_msg = format!(
-            "Loaded ({} fields decoded as Windows-1252; will save as UTF-8)",
-            fallback_fields
-        );
-    }
+    let bytes = fs::read(&path).context(format!("Could not read {:?}", path))?;
+    let (decoded_text, encoding_name) = crate::table::decode_file_bytes(&bytes);
+    let delimiter = crate::table::detect_delimiter(&decoded_text, Some(&path));
+    let (headers, rows) = crate::table::parse_tabular(&decoded_text, delimiter)?;
+    let mut app = NormalizerApp::new(path, headers, rows, delimiter, encoding_name);
+    app.status_msg = format!("Loaded ({} | {})", delimiter.name(), encoding_name);
     Ok(app)
-}
-
-/// Decodes a CSV field as UTF-8, falling back to Windows-1252 byte-by-byte for
-/// any invalid sequences. Handles files that mix both encodings.
-fn decode_field(bytes: &[u8], fallback_fields: &mut usize) -> String {
-    if let Ok(s) = std::str::from_utf8(bytes) {
-        return s.to_string();
-    }
-    *fallback_fields += 1;
-    let mut out = String::with_capacity(bytes.len() + 8);
-    for chunk in bytes.utf8_chunks() {
-        out.push_str(chunk.valid());
-        out.extend(chunk.invalid().iter().map(|&b| cp1252_char(b)));
-    }
-    out
-}
-
-/// Windows-1252 matches Latin-1 (and thus Unicode) except for 0x80..=0x9F.
-fn cp1252_char(b: u8) -> char {
-    const HIGH: [char; 32] = [
-        '€', '\u{FFFD}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{FFFD}', 'Ž', '\u{FFFD}',
-        '\u{FFFD}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{FFFD}', 'ž', 'Ÿ',
-    ];
-    match b {
-        0x80..=0x9F => HIGH[(b - 0x80) as usize],
-        _ => b as char,
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::table::Delimiter;
 
     #[test]
     fn test_mixed_encoding_csv_loads() {
@@ -1172,7 +1171,67 @@ mod tests {
         assert_eq!(&*app.db.columns[1].values[0], "size fool you\u{2014}this banjo");
         assert_eq!(&*app.db.columns[1].values[1], "Mastertone\u{AE} don\u{2019}t");
         assert_eq!(&*app.db.columns[1].values[2], "plain");
-        assert!(app.status_msg.contains("2 fields"));
+
+        let _ = fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_valid_utf8_with_windows1252_characters() {
+        let temp_path = std::env::temp_dir().join("normie_test_utf8_win1252.csv");
+        // Valid UTF-8 containing C1 control points U+0096 (en-dash), U+0093/U+0094 (smart quotes), and UTF-8 curly apostrophe
+        let content = "id,product_title,price\n1,Mastertone\u{0096}Special: \u{0093}Bluegrass\u{0094} 5-String,1299.00\n2,Banjolele Concert 8\u{201D},599.99\n";
+        fs::write(&temp_path, content.as_bytes()).unwrap();
+
+        let app = load_normalizer(temp_path.clone()).unwrap();
+        assert_eq!(app.db.headers, vec!["id", "product_title", "price"]);
+        assert_eq!(&*app.db.columns[1].values[0], "Mastertone–Special: “Bluegrass” 5-String");
+        assert_eq!(&*app.db.columns[1].values[1], "Banjolele Concert 8”");
+
+        let _ = fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_tsv_loading_and_saving() {
+        let temp_path = std::env::temp_dir().join("normie_test_data.tsv");
+        let norm_output = std::env::temp_dir().join("normie_test_data_normalized.tsv");
+        let _ = fs::remove_file(&norm_output);
+        let _ = fs::remove_file(temp_path.with_extension("normie.json"));
+
+        let content = "id\tmodel\tcategory\n1001\tTwanger\tBanjo\n1002\tBanjolele\tUke\n";
+        fs::write(&temp_path, content.as_bytes()).unwrap();
+
+        let mut app = load_normalizer(temp_path.clone()).unwrap();
+        assert_eq!(app.delimiter, Delimiter::Tab);
+        assert_eq!(app.db.headers, vec!["id", "model", "category"]);
+        assert_eq!(app.db.num_rows, 2);
+
+        // Normalize Uke -> Ukulele
+        app.norm.pipeline.push(crate::db::TransformationStep::SimpleMap {
+            column: "category".to_string(),
+            original: "Uke".to_string(),
+            normalized: "Ukulele".to_string(),
+        });
+
+        app.save_csv().unwrap();
+        assert!(norm_output.exists());
+
+        let saved = fs::read_to_string(&norm_output).unwrap();
+        assert!(saved.contains("1002\tBanjolele\tUkulele"));
+
+        let _ = fs::remove_file(temp_path);
+        let _ = fs::remove_file(norm_output);
+    }
+
+    #[test]
+    fn test_semicolon_format_detection() {
+        let temp_path = std::env::temp_dir().join("normie_test_euro.csv");
+        let content = "id;title;price\n1;Banjo;499,00\n2;Mandolin;399,00\n";
+        fs::write(&temp_path, content.as_bytes()).unwrap();
+
+        let app = load_normalizer(temp_path.clone()).unwrap();
+        assert_eq!(app.delimiter, Delimiter::Semicolon);
+        assert_eq!(app.db.headers, vec!["id", "title", "price"]);
+        assert_eq!(&*app.db.columns[1].values[0], "Banjo");
 
         let _ = fs::remove_file(temp_path);
     }
@@ -1180,12 +1239,12 @@ mod tests {
     #[test]
     fn test_ragged_csv_padding() {
         let temp_path = std::env::temp_dir().join("normie_test_ragged.csv");
-        let headers = csv::StringRecord::from(vec!["id", "name", "category"]);
+        let headers = vec!["id".to_string(), "name".to_string(), "category".to_string()];
         let rows = vec![
             vec!["1".to_string(), "Banjo".to_string()], // Missing column 3
             vec!["2".to_string(), "Guitar".to_string(), "Strings".to_string(), "Extra".to_string()], // Extra column
         ];
-        let app = NormalizerApp::new(temp_path, headers, rows);
+        let app = NormalizerApp::new(temp_path, headers, rows, Delimiter::Comma, "UTF-8");
         assert_eq!(app.db.num_rows, 2);
         assert_eq!(app.db.columns.len(), 3);
         assert_eq!(app.db.columns[0].values.len(), 2);
@@ -1200,12 +1259,12 @@ mod tests {
         let temp_path = std::env::temp_dir().join("normie_test_dedup.csv");
         let _ = fs::remove_file(temp_path.with_extension("normie.json"));
 
-        let headers = csv::StringRecord::from(vec!["id", "category"]);
+        let headers = vec!["id".to_string(), "category".to_string()];
         let rows = vec![
             vec!["1".to_string(), "Banjo".to_string()],
             vec!["2".to_string(), "Banjo".to_string()],
         ];
-        let mut app = NormalizerApp::new(temp_path.clone(), headers, rows);
+        let mut app = NormalizerApp::new(temp_path.clone(), headers, rows, Delimiter::Comma, "UTF-8");
         app.ui.col_list_state.select(Some(1));
         app.ui.val_list_state.select(Some(0));
 
@@ -1229,9 +1288,9 @@ mod tests {
         let temp_path = std::env::temp_dir().join("normie_test_reorder.csv");
         let _ = fs::remove_file(temp_path.with_extension("normie.json"));
 
-        let headers = csv::StringRecord::from(vec!["id", "category"]);
+        let headers = vec!["id".to_string(), "category".to_string()];
         let rows = vec![vec!["1".to_string(), "A".to_string()]];
-        let mut app = NormalizerApp::new(temp_path.clone(), headers, rows);
+        let mut app = NormalizerApp::new(temp_path.clone(), headers, rows, Delimiter::Comma, "UTF-8");
         app.norm.pipeline.clear();
 
         app.norm.pipeline.push(crate::db::TransformationStep::SimpleMap {
@@ -1261,12 +1320,12 @@ mod tests {
         let _ = fs::remove_file(&norm_output);
         let _ = fs::remove_file(temp_path.with_extension("normie.json"));
 
-        let headers = csv::StringRecord::from(vec!["id", "category", "price"]);
+        let headers = vec!["id".to_string(), "category".to_string(), "price".to_string()];
         let rows = vec![
             vec!["1".to_string(), "Banjo".to_string(), "500".to_string()],
             vec!["2".to_string(), "Banjo".to_string(), "1500".to_string()],
         ];
-        let mut app = NormalizerApp::new(temp_path.clone(), headers, rows);
+        let mut app = NormalizerApp::new(temp_path.clone(), headers, rows, Delimiter::Comma, "UTF-8");
 
         // Add a conditional mapping: IF price > 1000 => "Pro Banjo"
         app.norm.pipeline.push(crate::db::TransformationStep::ConditionalMap {
@@ -1299,6 +1358,17 @@ mod tests {
 
         let _ = fs::remove_file(&norm_output);
         let _ = fs::remove_file(temp_path.with_extension("normie.json"));
+    }
+
+    #[test]
+    fn test_goldtone_products_real_data() {
+        let path = PathBuf::from("goldtone_products.csv");
+        if path.exists() {
+            let app = load_normalizer(path).unwrap();
+            assert_eq!(app.delimiter, Delimiter::Comma);
+            assert!(app.db.headers.len() > 10);
+            assert!(app.db.num_rows > 100);
+        }
     }
 }
 

@@ -1,20 +1,24 @@
 # normie-rs 🧹
 
-A blazing-fast, terminal-based CSV normalization tool. `normie-rs` helps you quickly clean up messy CSV data by mapping unique column values to normalized targets, with a focus on speed and keyboard-driven efficiency.
+A blazing-fast, terminal-based tabular data normalization tool. `normie-rs` helps you quickly clean up messy CSV, TSV, and tabular data by mapping unique column values to normalized targets, with a focus on speed and keyboard-driven efficiency.
 
 ![normie-rs Splash](./assets/splash.avif)
 
 ## Features
 
+- **Universal Tabulating Format Support**: Auto-detects delimiters (CSV `,`, TSV `\t`, Semicolon `;`, Pipe `|`, Colon `:`) and preserves formatting when saving.
+- **Universal Encoding & Mojibake Healing**: Seamlessly loads UTF-8 (with/without BOM), UTF-16 LE/BE (Excel exports), Windows-1252, and repairs C1 control characters (U+0080..=U+009F) and double-encoded UTF-8.
+- **Fault-Tolerant & Resilient**: Gracefully parses unescaped quotes (e.g. `8" Banjo Rim`), unclosed quotes, and ragged rows without crashing.
+- **CLI Direct Opening**: Launch with `normie-rs path/to/file.tsv` to immediately open in the normalizer.
 - **Dashboard & Splash Screen**: Quick access to recent files or start a new session.
-- **TUI File Browser**: Navigate your local file system and pick CSVs without leaving the terminal.
+- **TUI File Browser**: Navigate your local file system, filter tabular formats (`.csv`, `.tsv`, `.tab`, `.txt`, `.psv`, `.dsv`), or toggle to view all files.
 - **Recent File Tracking**: Remembers your last 10 opened files for instant access.
 - **Intelligent Normalization**: 
   - View unique values per column.
   - Search and filter values.
   - Batch map selected values to a single target.
   - Side-by-side view of source keys (IDs) to help you identify values in context.
-- **Persistent Mappings**: Saves your mapping progress to a `.normie.json` file next to your CSV, so you can resume later.
+- **Persistent Mappings**: Saves your mapping progress to a `.normie.json` file next to your data, so you can resume later.
 - **Blazing Fast**: Built in Rust with `ratatui` for a snappy, low-latency experience.
 
 ## Installation
@@ -35,10 +39,12 @@ cargo install --path .
 
 ## Usage
 
-Simply run the executable:
+Simply run the executable, or provide a file directly:
 
 ```bash
 normie-rs
+# Or open a file directly:
+normie-rs path/to/products.tsv
 ```
 
 ### Global Shortcuts
@@ -53,8 +59,9 @@ normie-rs
 
 #### File Browser
 - `UP/DOWN`: Navigate files.
-- `ENTER`: Open CSV or enter Directory.
+- `ENTER`: Open file or enter Directory.
 - `BACKSPACE`: Go to parent directory.
+- `A`: Toggle between tabular data files and all files.
 - `Q / ESC`: Return to Dashboard.
 
 #### Normalizer
